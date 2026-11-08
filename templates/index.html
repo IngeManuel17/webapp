@@ -86,7 +86,7 @@
     <div class="barra">
       <div><h2 style="display:inline" id="titulo">Selecciona una tabla</h2><span class="n" id="cuenta"></span></div>
       <div>
-        <input id="buscar" placeholder="Buscar..." oninput="pintar()">
+        <input id="buscar" aria-label="Buscar" placeholder="Buscar..." oninput="pintar()">
         <button class="b verde" onclick="abrirForm(null)">+ Nuevo</button>
       </div>
     </div>
@@ -97,7 +97,7 @@
 <!-- Crear / editar -->
 <div class="ov" id="ovForm">
   <div class="modal">
-    <h3 id="fTitulo"></h3>
+    <h3 id="fTitulo">Formulario</h3>
     <p id="fSub"></p>
     <div id="fCampos"></div>
     <div class="ferr" id="fErr"></div>
