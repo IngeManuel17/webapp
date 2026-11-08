@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultas · Panel DynamoDB</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #f3f4f6; color: #222; }
+  header { background: #232f3e; color: #fff; padding: 14px 24px; display: flex;
+           justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header a { background: #ff9900; color: #000; padding: 8px 14px; border-radius: 4px;
+             text-decoration: none; font-weight: bold; font-size: 14px; }
+  .wrap { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+
+  .grupo { font-size: 13px; color: #666; margin: 0 0 6px; font-weight: bold; text-transform: uppercase; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .tabs button { padding: 8px 14px; border: 1px solid #bbb; background: #fff; cursor: pointer; border-radius: 4px; }
+  .tabs button.on { background: #232f3e; color: #fff; border-color: #232f3e; }
+
+  .panel { background: #fff; border: 1px solid #d9d9d9; border-radius: 4px; margin-bottom: 14px; }
+  .info { padding: 14px 16px; border-bottom: 1px solid #d9d9d9; }
+  .info h2 { margin: 0 0 4px; font-size: 18px; }
+  .info p { margin: 0; color: #555; font-size: 14px; line-height: 1.4; }
+  .barra { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; padding: 12px 16px; }
+  .f label { display: block; font-size: 13px; color: #444; margin-bottom: 4px; }
+  input, select { padding: 8px; border: 1px solid #bbb; border-radius: 4px; font-size: 14px; width: 220px; max-width: 100%; }
+  button.b { padding: 9px 16px; border: none; border-radius: 4px; cursor: pointer; color: #fff;
+             font-size: 14px; background: #2e7d32; }
+  .meta { padding: 8px 16px; color: #666; font-size: 13px; border-top: 1px solid #e5e5e5; min-height: 34px; }
+
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 9px 12px; border-top: 1px solid #e5e5e5; text-align: left; white-space: nowrap; }
+  th { background: #f0f0f0; }
+  tr:hover td { background: #fafafa; }
+  tr.tot td { background: #e8f5e9; font-weight: bold; }
+  a.m { color: #1565c0; }
+  .msg { padding: 30px; text-align: center; color: #666; }
+  .err { color: #c62828; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Consultas · EC2 + Flask + DynamoDB</h1>
+  <a href="/">← Volver al panel</a>
+</header>
+
+<div class="wrap">
+  <p class="grupo">Consultas básicas</p>
+  <div class="tabs" id="menuBasicas"></div>
+  <p class="grupo">Retos</p>
+  <div class="tabs" id="menuRetos"></div>
+
+  <div class="panel">
+    <div class="info">
+      <h2 id="titulo">Elige una consulta</h2>
+      <p id="desc">Selecciona una de las opciones de arriba.</p>
+    </div>
+    <div class="barra" id="barra"></div>
+    <div class="meta" id="meta"></div>
+    <div class="scroll" id="contenido"><div class="msg">Elige una consulta.</div></div>
+  </div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const cop = n => "$" + Number(n).toLocaleString("es-CO");
+
+  const BASICAS = [
+    {id: "cliente", t: "Cliente por ID",
+     d: "Equivale a get-item sobre la tabla clientes con la llave clienteId.",
+     p: {n: "id", etq: "ClienteId", tipo: "text", def: "C001"}},
+    {id: "productos_precio", t: "Productos con precio mayor a…",
+     d: "Escanea la tabla productos y filtra los que superan el precio indicado.",
+     p: {n: "min", etq: "Precio mayor a", tipo: "number", def: 1000}},
+    {id: "sucursales", t: "Sucursales por ciudad",
+     d: "Filtra la tabla sucursales según la ciudad elegida.",
+     p: {n: "ciudad", etq: "Ciudad", tipo: "select", op: "ciudades", def: "Bogotá"}}
+  ];
+  const RETOS = [
+    {id: "reto3", t: "Reto 3 · Vendidos por ciudad",
+     d: "Busca los clientes de la ciudad, sus ventas, el productoId de cada una y consulta los productos. Muestra producto, categoría, cliente y ciudad.",
+     p: {n: "ciudad", etq: "Ciudad", tipo: "select", op: "ciudades", def: "Medellín"}},
+    {id: "reto4", t: "Reto 4 · Ingresos por categoría",
+     d: "Flujo: Ventas → productoId → Productos → categoría → suma de cantidad × precio.",
+     p: null},
+    {id: "reto5", t: "Reto 5 · Clientes por categoría",
+     d: "Busca los productos de la categoría, sus ventas, obtiene los clienteId, elimina duplicados y consulta Clientes.",
+     p: {n: "categoria", etq: "Categoría", tipo: "select", op: "categorias", def: "Almacenamiento"}}
+  ];
+  const TODAS = [...BASICAS, ...RETOS];
+
+  let opciones = {ciudades: [], categorias: []}, actual = null;
+
+  function menu() {
+    const btn = c => `<button data-id="${c.id}">${esc(c.t)}</button>`;
+    $("menuBasicas").innerHTML = BASICAS.map(btn).join("");
+    $("menuRetos").innerHTML = RETOS.map(btn).join("");
+    document.querySelectorAll(".tabs button").forEach(b =>
+      b.onclick = () => elegir(TODAS.find(c => c.id === b.dataset.id)));
+  }
+
+  function campo(p) {
+    if (!p) return `<span style="color:#666">Esta consulta no necesita parámetros.</span>`;
+    if (p.tipo === "select") {
+      const lista = [...new Set([p.def, ...(opciones[p.op] || [])])];
+      return `<div class="f"><label>${p.etq}</label><select id="param">` +
+        lista.map(o => `<option ${o === p.def ? "selected" : ""}>${esc(o)}</option>`).join("") + `</select></div>`;
+    }
+    return `<div class="f"><label>${p.etq}</label><input id="param" type="${p.tipo}" value="${esc(p.def)}"></div>`;
+  }
+
+  function elegir(c) {
+    actual = c;
+    document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.id === c.id));
+    $("titulo").textContent = c.t;
+    $("desc").textContent = c.d;
+    $("barra").innerHTML = campo(c.p) + `<button class="b" onclick="ejecutar()">Ejecutar consulta</button>`;
+    if ($("param")) $("param").addEventListener("keydown", e => { if (e.key === "Enter") ejecutar(); });
+    ejecutar();
+  }
+
+  function celda(i, v, r) {
+    if (v === null || v === undefined) return "";
+    if (r.dinero && r.dinero.includes(i)) return cop(v);
+    if (r.columnas[i].toLowerCase() === "correo") return `<a class="m" href="mailto:${esc(v)}">${esc(v)}</a>`;
+    return esc(v);
+  }
+
+  async function ejecutar() {
+    const c = actual; if (!c) return;
+    const t0 = performance.now();
+    $("meta").textContent = "";
+    $("contenido").innerHTML = '<div class="msg">Consultando...</div>';
+    try {
+      const q = c.p ? "?" + c.p.n + "=" + encodeURIComponent($("param").value) : "";
+      const r = await fetch("/q/" + c.id + q);
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "Error en la consulta");
+      const ms = Math.round(performance.now() - t0);
+      const n = d.total ? d.filas.length - 1 : d.filas.length;
+      $("meta").textContent = `${n} resultado(s) · ${ms} ms`;
+      if (!d.filas.length || n === 0) {
+        $("contenido").innerHTML = `<div class="msg">${esc(d.vacio)}</div>`; return;
+      }
+      let h = "<table><thead><tr>" + d.columnas.map(x => `<th>${esc(x)}</th>`).join("") + "</tr></thead><tbody>";
+      d.filas.forEach((f, k) => {
+        const esTotal = d.total && k === d.filas.length - 1;
+        h += `<tr class="${esTotal ? "tot" : ""}">` + f.map((v, i) => `<td>${celda(i, v, d)}</td>`).join("") + "</tr>";
+      });
+      $("contenido").innerHTML = h + "</tbody></table>";
+    } catch (e) {
+      $("contenido").innerHTML = `<div class="msg err">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  (async function () {
+    menu();
+    try { opciones = await (await fetch("/q/opciones")).json(); } catch (e) {}
+    if (!opciones.ciudades) opciones = {ciudades: [], categorias: []};
+    elegir(BASICAS[0]);
+  })();
+</script>
+</body>
+</html>
